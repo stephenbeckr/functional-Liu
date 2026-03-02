@@ -28,11 +28,11 @@ def mse(y, yhat):
 # =========================
 def ols(X,y):
     """ Ordinary least squares
-    Input: X, y, [lam_opt]
+    Input: X, y
         Design matrix X (n x p), response y (size n)
         Optional: optimal lambda parameters
 
-    Output: lambda_optimal, beta_optimal, gcv
+    Output: beta_optimal, gcv
         where gcv is the generalized cross validation score.
     """
     n, p = X.shape
@@ -46,7 +46,7 @@ def ols(X,y):
 # RIDGE GCV.
 # =========================
 def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'):
-    """ Classic ridge regression: $(XX^T + lambda I)^{-1} X^T y$ 
+    """ Classic ridge regression: $beta = (XX^T + lambda I)^{-1} X^T y$ 
     Input: X, y, [lam_opt]
         Design matrix X (n x p), response y (size n)
         Optional: optimal lambda parameters. If not provided, then optimal values
@@ -55,7 +55,7 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
             In this case, lambda_bounds are bound constraints on the size of lambda
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
 
-    Output: lambda_optimal, beta_optimal, gcv
+    Output: beta_optimal, gcv, lambda_optimal
         where gcv is the generalized cross validation score.
     """
     n, p = X.shape
@@ -83,14 +83,14 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     else:
         beta = sla.solve(X.T@X + lam_opt*np.eye(p), X.T@y,assume_a='pos')
         gcv_ridge = gcv(lam_opt)
-    return lam_opt, beta, gcv_ridge
+    return beta, gcv_ridge, lam_opt
 
 
 # =========================
 # CLASSICAL LIU GCV
 # =========================
 def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'):
-    """ Standard liu: $(XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
+    """ Standard liu: $beta = (XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
     Input: X, y, [params_optimal]
         Design matrix X (n x p), response y (size n)
         Optional: optimal parameters for d and lambda. If not provided, then optimal values
@@ -100,7 +100,7 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
             (the value of d is always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
 
-    Output: lambda_optimal, d_optimal, beta_optimal, gcv
+    Output: beta_optimal, gcv, lambda_optimal, d_optimal
         where gcv is the generalized cross validation score.
     """
     n, p = X.shape
@@ -135,14 +135,14 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
                      X.T@y + d_opt*lam_opt*np.array(beta_OLS),
                      assume_a = 'pos')
 
-    return lam_opt, d_opt, beta, gcv_liu
+    return beta, gcv_liu, lam_opt, d_opt
 
 # =========================
 # CARDOT'S ESTIMATOR
 # =========================
 def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'):
     """ Cardot's generalized ridge regression estimator
-        $(XX^T + Q)^{-1} X^T y$
+        $beta = (XX^T + Q)^{-1} X^T y$
         where Q = lambda(alpha I + (1-alpha) R)
     Input: X, y, R, [params_optimal]
         Design matrix X (n x p), response y (size n)
@@ -153,7 +153,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
             (the value of alpha is always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
 
-    Output: lambda_optimal, alpha_optimal, beta_optimal, gcv
+    Output: beta_optimal, gcv, lambda_optimal, alpha_optimal
         where gcv is the generalized cross validation score
         and lambda and alpha were determined to minimize gcv.
     """
@@ -177,7 +177,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     if params_optimal is None:
         grad = jax.jit( jax.grad(gcv) )
         res = opt.minimize(gcv, np.array([1.0,0.5]), jac=grad,
-                          bounds=[lambda_bounds,(0,1),(0,1)], method=opt_method)
+                          bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, alpha_opt = res.x
         gcv_cardot = res.fun
@@ -188,14 +188,14 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     Q = lam_opt*(alpha_opt*np.eye(p) + (1-alpha_opt)*R)
     beta = sla.solve(X.T@X + Q, X.T@y, assume_a = 'pos')
 
-    return lam_opt, alpha_opt, beta, gcv_cardot
+    return beta, gcv_cardot, lam_opt, alpha_opt
 
 
 # =========================
 # FUNCTIONAL LIU GCV
 # =========================
 def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'):
-    """ Functional Liu estimator
+    """ Functional Liu estimator: combination of Cardot's generalized ridge with Liu's biased estimator
         $(XX^T + Q)^{-1}(X^T y + d lambda Q beta_{OLS})$
         where Q = lambda(alpha I + (1-alpha) R) as in Cardot.
     Input: X, y, R, [params_optimal]
@@ -207,7 +207,7 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
             (the value of d and alpha are always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
 
-    Output: lambda_optimal, d_optimal, alpha_optimal, beta_optimal, gcv
+    Output: beta_optimal, gcv, lambda_optimal, d_optimal, alpha_optimal
         where gcv is the generalized cross validation score
         and lambda, d and alpha were determined to minimize gcv.
     """
@@ -247,4 +247,4 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
                      X.T@y + d_opt*(Q@np.linalg.lstsq(X,y,rcond=None)[0]),
                      assume_a = 'pos')
 
-    return lam_opt, d_opt, alpha_opt, beta, gcv_fliu
+    return beta, gcv_fliu, lam_opt, d_opt, alpha_opt
