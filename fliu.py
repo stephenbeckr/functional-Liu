@@ -200,7 +200,7 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
         where Q = lambda(alpha I + (1-alpha) R) as in Cardot.
     Input: X, y, R, [params_optimal]
         Design matrix X (n x p), response y (size n)
-        Optional: optimal parameters for d and lambda. If not provided, then optimal values
+        Optional: optimal parameters for lambda, d, alpha. If not provided, then optimal values
             (based on the GCV criteria) are found using a gradient-based
             optimization solver
             In this case, lambda_bounds are bound constraints on the size of lambda
