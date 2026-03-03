@@ -15,10 +15,12 @@ and then do generalized ridge regression
 $$\hat{\beta}_{\lambda,\alpha} = (X^\top X + \lambda Q)^{-1} X^\top y$$
 
 - Liu's biased estimator, for $0\le d \le 1$,
-$$\hat{\beta}_{\lambda,d} = (X^\top X + \lambda I)^{-1}(X^\top y + d\lambda \hat{\beta}_\lambda )$$
+$$\hat{\beta}_{\lambda,d} = (X^\top X + \lambda I)^{-1}(X^\top y + d\lambda \hat{\beta}_0)$$
+where $\hat{\beta}_0$ is the OLS estimator.
 
-- and we introduce the functional Liu estimator, which combines Cardot's estimator with Liu's estimator,
-$$\hat{\beta}_{\lambda,\alpha, d} = (X^\top X + \lambda Q)^{-1}(X^\top y + d\lambda Q\hat{\beta}_\lambda )$$
+- and we introduce the **functional Liu estimator**, which combines Cardot's estimator with Liu's estimator,
+$$\hat{\beta}_{\lambda,\alpha, d} = (X^\top X + \lambda Q)^{-1}(X^\top y + d\lambda Q\hat{\beta}_0)$$
+where $\hat{\beta}_0$ is the OLS estimator.
 
 This code repository consists of:
 - A Python package, `fliu.py`, which implements these estimators as well as an efficient method to find the optimal parameter values
