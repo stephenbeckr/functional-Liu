@@ -51,9 +51,10 @@ def ols(X,y, criteria = 'GCV'):
     return beta, gcv_ols
 
 # =========================
-# RIDGE GCV.
+# RIDGE
 # =========================
-def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', criteria = 'GCV'):
+def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+          criteria = 'GCV', log_change_of_variables=None):
     """ Classic ridge regression: $beta = (XX^T + lambda I)^{-1} X^T y$ 
     Input: X, y, [lam_opt]
         Design matrix X (n x p), response y (size n)
@@ -72,10 +73,21 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     G  = jnp.asarray(X.T @ X)
     Xy = jnp.asarray(X.T @ y)
     X  = jnp.asarray(X)
-
+    if log_change_of_variables is None:
+        if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
+            log_change_of_variables = True
+        else:
+            log_change_of_variables = False
+    if log_change_of_variables:
+        log = jnp.log
+        exp = jnp.exp
+    else:
+        log = lambda x : x
+        exp = lambda x : x
+        
     def gcv(lam_vec):
         """ Generalized Cross Validation criterion """
-        lam = lam_vec[0]
+        lam = exp(lam_vec[0])
         A = G + lam*jnp.eye(p)
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve( (c,lower), Xy )
@@ -86,7 +98,7 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     
     def cv(lam_vec):
         """ Leave-one-out Cross Validation criterion, specialized for linear predictors """
-        lam = lam_vec[0]
+        lam = exp(lam_vec[0])
         A = G + lam*jnp.eye(p)
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve( (c,lower), Xy )
@@ -104,9 +116,10 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     if lam_opt is None:
         # We look for the optimal vector
         grad      = jax.jit( jax.grad(crit) )
-        results   = opt.minimize(crit, np.array([1.0]), jac=grad,
+        lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
+        results   = opt.minimize(crit, log(np.array([1.0])), jac=grad,
                           bounds=[lambda_bounds], method=opt_method)
-        lam_opt   = results.x[0]
+        lam_opt   = exp(results.x[0])
         beta      = sla.solve(X.T@X + lam_opt*np.eye(p), X.T@y,assume_a='pos')
         gcv_ridge = results.fun # already computed
     else:
@@ -116,9 +129,10 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
 
 
 # =========================
-# CLASSICAL LIU GCV
+# CLASSICAL LIU
 # =========================
-def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', criteria = 'GCV'):
+def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+                  criteria = 'GCV', log_change_of_variables=None):
     """ Standard liu: $beta = (XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
     Input: X, y, [params_optimal]
         Design matrix X (n x p), response y (size n)
@@ -140,9 +154,21 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
     X  = jnp.asarray(X)
     beta_OLS = jnp.asarray(sla.lstsq(X,y)[0])
     P_OLS = jnp.asarray(sla.lstsq(X,np.eye(n))[0])
-
+    if log_change_of_variables is None:
+        if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
+            log_change_of_variables = True
+        else:
+            log_change_of_variables = False
+    if log_change_of_variables:
+        log = jnp.log
+        exp = jnp.exp
+    else:
+        log = lambda x : x
+        exp = lambda x : x
+        
     def gcv(params):
         lam, d = params
+        lam = exp(lam)
         A = G + lam*jnp.eye(p)
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve((c,lower), Xy + d*lam*beta_OLS)
@@ -153,6 +179,7 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
 
     def cv(params):
         lam, d = params
+        lam = exp(lam)
         A = G + lam*jnp.eye(p)
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve((c,lower), Xy + d*lam*beta_OLS)
@@ -169,10 +196,12 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
     
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
-        res = opt.minimize(crit, np.array([1.0,0.5]), jac=grad,
+        lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
+        res = opt.minimize(crit, np.array([log(1.0),0.5]), jac=grad,
                           bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, d_opt = res.x
+        lam_opt = exp(lam_opt)
         gcv_liu = res.fun
     else:
         lam_opt, d_opt = params_optimal
@@ -187,7 +216,8 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
 # =========================
 # CARDOT'S ESTIMATOR
 # =========================
-def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', criteria = 'GCV'):
+def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+           criteria = 'GCV', log_change_of_variables=None):
     """ Cardot's generalized ridge regression estimator
         $beta = (XX^T + Q)^{-1} X^T y$
         where Q = lambda(alpha I + (1-alpha) R)
@@ -212,9 +242,21 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     X  = jnp.asarray(X)
     Rj = jnp.asarray(R)
     I  = jnp.eye(p)
-
+    if log_change_of_variables is None:
+        if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
+            log_change_of_variables = True
+        else:
+            log_change_of_variables = False
+    if log_change_of_variables:
+        log = jnp.log
+        exp = jnp.exp
+    else:
+        log = lambda x : x
+        exp = lambda x : x
+        
     def gcv(params):
         lam, alpha = params
+        lam = exp(lam)
         Q = lam*(alpha*I + (1-alpha)*Rj)
         A = G + Q
         (c,lower)  = jsla.cho_factor(A)
@@ -226,6 +268,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
 
     def cv(params):
         lam, alpha = params
+        lam = exp(lam)
         Q = lam*(alpha*I + (1-alpha)*Rj)
         A = G + Q
         (c,lower)  = jsla.cho_factor(A)
@@ -243,10 +286,12 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
-        res = opt.minimize(crit, np.array([1.0,0.5]), jac=grad,
+        lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
+        res = opt.minimize(crit, np.array(log([1.0),0.5]), jac=grad,
                           bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, alpha_opt = res.x
+        lam_opt = exp(lam_opt)
         gcv_cardot = res.fun
     else:
         lam_opt, alpha_opt = params_optimal
@@ -259,9 +304,10 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
 
 
 # =========================
-# FUNCTIONAL LIU GCV
+# FUNCTIONAL LIU
 # =========================
-def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', criteria = 'GCV'):
+def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), 
+                   opt_method = 'SLSQP', criteria = 'GCV', log_change_of_variables=None):
     """ Functional Liu estimator: combination of Cardot's generalized ridge with Liu's biased estimator
         $(XX^T + Q)^{-1}(X^T y + d lambda Q beta_{OLS})$
         where Q = lambda(alpha I + (1-alpha) R) as in Cardot.
@@ -288,9 +334,21 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
     Rj = jnp.asarray(R)
     I  = jnp.eye(p)
     P_OLS = jnp.asarray(sla.lstsq(X,np.eye(n))[0])
-
+    if log_change_of_variables is None:
+        if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
+            log_change_of_variables = True
+        else:
+            log_change_of_variables = False
+    if log_change_of_variables:
+        log = jnp.log
+        exp = jnp.exp
+    else:
+        log = lambda x : x
+        exp = lambda x : x
+        
     def gcv(params):
         lam, d, alpha = params
+        lam = exp(lam)
         Q = lam*(alpha*I + (1-alpha)*Rj)
         A = G + Q
         (c,lower)  = jsla.cho_factor(A)
@@ -302,6 +360,7 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
     
     def cv(params):
         lam, d, alpha = params
+        lam = exp(lam)
         Q = lam*(alpha*I + (1-alpha)*Rj)
         A = G + Q
         (c,lower)  = jsla.cho_factor(A)
@@ -319,11 +378,12 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt
     
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
-
-        res = opt.minimize(crit, np.array([1.0,0.5,0.5]), jac=grad,
+        lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
+        res = opt.minimize(crit, np.array([log(1.0),0.5,0.5]), jac=grad,
                           bounds=[lambda_bounds,(0,1),(0,1)], method=opt_method)
 
         lam_opt, d_opt, alpha_opt = res.x
+        lam_opt = exp(lam_opt)
         gcv_fliu = res.fun
     else:
         lam_opt, d_opt, alpha_opt = params_optimal
