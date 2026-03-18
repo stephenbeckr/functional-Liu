@@ -287,7 +287,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        res = opt.minimize(crit, np.array(log([1.0),0.5]), jac=grad,
+        res = opt.minimize(crit, np.array([log(1.0),0.5]), jac=grad,
                           bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, alpha_opt = res.x
