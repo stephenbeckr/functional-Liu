@@ -159,7 +159,7 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
             log_change_of_variables = True
         else:
             log_change_of_variables = False
-    if log_change_of_variables and (lam_opt is None):
+    if log_change_of_variables and (params_optimal is None):
         log = jnp.log
         exp = jnp.exp
     else:
@@ -247,7 +247,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
             log_change_of_variables = True
         else:
             log_change_of_variables = False
-    if log_change_of_variables and (lam_opt is None):
+    if log_change_of_variables and (params_optimal is None):
         log = jnp.log
         exp = jnp.exp
     else:
@@ -339,7 +339,7 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6),
             log_change_of_variables = True
         else:
             log_change_of_variables = False
-    if log_change_of_variables and (lam_opt is None):
+    if log_change_of_variables and (params_optimal is None):
         log = jnp.log
         exp = jnp.exp
     else:
