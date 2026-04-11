@@ -5,6 +5,12 @@ import jax
 jax.config.update("jax_enable_x64", True)
 from   jax import numpy as jnp
 import jax.scipy.linalg as jsla
+from typing import NamedTuple
+
+class ParamOutput(NamedTuple):
+    lam: float = np.nan
+    alpha: float = np.nan
+    d: float = np.nan
 
 # =========================
 # SECOND DIFFERENCE PENALTY
@@ -32,7 +38,7 @@ def ols(X,y, criteria = 'GCV'):
         Design matrix X (n x p), response y (size n)
         Optional: optimal lambda parameters,
             criteria is either 'GCV' for the Generalized Cross Validation criteria,
-            or 'CV' to use leave-one-out (LOO) Cross Valiation
+            or 'CV' to use leave-one-out (LOO) Cross Validation
 
     Output: beta_optimal, gcv
         where gcv is the generalized cross validation score
@@ -48,13 +54,13 @@ def ols(X,y, criteria = 'GCV'):
         gcv_ols = np.mean(((y-yhat)/(1-np.diag(P)))**2 ) 
     else:
         raise ValueError('Criteria must be either "GCV" or "CV"')
-    return beta, gcv_ols
+    return beta, gcv_ols, ParamOutput()
 
 # =========================
 # RIDGE
 # =========================
 def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
-          criteria = 'GCV', log_change_of_variables=None):
+          criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Classic ridge regression: $beta = (XX^T + lambda I)^{-1} X^T y$ 
     Input: X, y, [lam_opt]
         Design matrix X (n x p), response y (size n)
@@ -64,7 +70,16 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
             In this case, lambda_bounds are bound constraints on the size of lambda
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
             criteria is either 'GCV' for the Generalized Cross Validation criteria,
-            or 'CV' to use leave-one-out (LOO) Cross Valiation
+            or 'CV' to use leave-one-out (LOO) Cross Validation
+
+            log_change_of_variables determines whether the optimizer uses a log change-of-variables.
+                If set to None, then it automatically determines whether to do the change-of-variables
+                based on whether lambda_bounds[1]/lambda_bounds[0] >= 1e3
+            
+            penalize_constant (default: True) determines whether I is the identity matrix,
+                or if penalize_constant=False, then it is the identity matrix except the top left entry
+                is zero (so that if the top entry of beta represents the constant term, 
+                then the constant term isn't penalized)
 
     Output: beta_optimal, gcv, lambda_optimal
         where gcv is the generalized cross validation score (or LOO CV).
@@ -84,11 +99,14 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     else:
         log = lambda x : x
         exp = lambda x : x
+    I = jnp.eye(p)        
+    if not penalize_constant:
+        I[0,0] = 0.
         
     def gcv(lam_vec):
         """ Generalized Cross Validation criterion """
         lam = exp(lam_vec[0])
-        A = G + lam*jnp.eye(p)
+        A = G + lam*I
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve( (c,lower), Xy )
         yhat = jnp.asarray(X) @ beta
@@ -99,7 +117,7 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     def cv(lam_vec):
         """ Leave-one-out Cross Validation criterion, specialized for linear predictors """
         lam = exp(lam_vec[0])
-        A = G + lam*jnp.eye(p)
+        A = G + lam*I
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve( (c,lower), Xy )
         yhat = jnp.asarray(X) @ beta
@@ -125,14 +143,14 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
     else:
         beta = sla.solve(X.T@X + lam_opt*np.eye(p), X.T@y,assume_a='pos')
         gcv_ridge = crit(lam_opt)
-    return beta, gcv_ridge, lam_opt
+    return beta, gcv_ridge, ParamOutput(lam=lam_opt)
 
 
 # =========================
 # CLASSICAL LIU
 # =========================
 def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
-                  criteria = 'GCV', log_change_of_variables=None):
+                  criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Standard liu: $beta = (XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
     Input: X, y, [params_optimal]
         Design matrix X (n x p), response y (size n)
@@ -143,7 +161,16 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
             (the value of d is always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
             criteria is either 'GCV' for the Generalized Cross Validation criteria,
-            or 'CV' to use leave-one-out (LOO) Cross Valiation
+            or 'CV' to use leave-one-out (LOO) Cross Validation
+
+            log_change_of_variables determines whether the optimizer uses a log change-of-variables.
+                If set to None, then it automatically determines whether to do the change-of-variables
+                based on whether lambda_bounds[1]/lambda_bounds[0] >= 1e3
+            
+            penalize_constant (default: True) determines whether I is the identity matrix,
+                or if penalize_constant=False, then it is the identity matrix except the top left entry
+                is zero (so that if the top entry of beta represents the constant term, 
+                then the constant term isn't penalized)
 
     Output: beta_optimal, gcv, lambda_optimal, d_optimal
         where gcv is the generalized cross validation score (or LOO CV).
@@ -165,11 +192,14 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
     else:
         log = lambda x : x
         exp = lambda x : x
+    I = jnp.eye(p)        
+    if not penalize_constant:
+        I[0,0] = 0.
         
     def gcv(params):
         lam, d = params
         lam = exp(lam)
-        A = G + lam*jnp.eye(p)
+        A = G + lam*I
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve((c,lower), Xy + d*lam*beta_OLS)
         yhat = X @ beta
@@ -180,7 +210,7 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
     def cv(params):
         lam, d = params
         lam = exp(lam)
-        A = G + lam*jnp.eye(p)
+        A = G + lam*I
         (c,lower)  = jsla.cho_factor(A)
         beta = jsla.cho_solve((c,lower), Xy + d*lam*beta_OLS)
         yhat = X @ beta
@@ -211,13 +241,13 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
                      X.T@y + d_opt*lam_opt*np.array(beta_OLS),
                      assume_a = 'pos')
 
-    return beta, gcv_liu, lam_opt, d_opt
+    return beta, gcv_liu, ParamOutput(lam=lam_opt, d=d_opt)
 
 # =========================
 # CARDOT'S ESTIMATOR
 # =========================
 def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
-           criteria = 'GCV', log_change_of_variables=None):
+           criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Cardot's generalized ridge regression estimator
         $beta = (XX^T + Q)^{-1} X^T y$
         where Q = lambda(alpha I + (1-alpha) R)
@@ -230,7 +260,16 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
             (the value of alpha is always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
             criteria is either 'GCV' for the Generalized Cross Validation criteria,
-            or 'CV' to use leave-one-out (LOO) Cross Valiation
+            or 'CV' to use leave-one-out (LOO) Cross Validation
+
+            log_change_of_variables determines whether the optimizer uses a log change-of-variables.
+                If set to None, then it automatically determines whether to do the change-of-variables
+                based on whether lambda_bounds[1]/lambda_bounds[0] >= 1e3
+            
+            penalize_constant (default: True) determines whether I is the identity matrix,
+                or if penalize_constant=False, then it is the identity matrix except the top left entry
+                is zero (so that if the top entry of beta represents the constant term, 
+                then the constant term isn't penalized)
 
     Output: beta_optimal, gcv, lambda_optimal, alpha_optimal
         where gcv is the generalized cross validation score (or LOO CV)
@@ -242,6 +281,8 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     X  = jnp.asarray(X)
     Rj = jnp.asarray(R)
     I  = jnp.eye(p)
+    if not penalize_constant:
+        I[0,0] = 0.
     if log_change_of_variables is None:
         if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
             log_change_of_variables = True
@@ -300,14 +341,14 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     Q = lam_opt*(alpha_opt*np.eye(p) + (1-alpha_opt)*R)
     beta = sla.solve(X.T@X + Q, X.T@y, assume_a = 'pos')
 
-    return beta, gcv_cardot, lam_opt, alpha_opt
+    return beta, gcv_cardot, ParamOutput(lam=lam_opt, alpha=alpha_opt)
 
 
 # =========================
 # FUNCTIONAL LIU
 # =========================
 def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), 
-                   opt_method = 'SLSQP', criteria = 'GCV', log_change_of_variables=None):
+                   opt_method = 'SLSQP', criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Functional Liu estimator: combination of Cardot's generalized ridge with Liu's biased estimator
         $(XX^T + Q)^{-1}(X^T y + d lambda Q beta_{OLS})$
         where Q = lambda(alpha I + (1-alpha) R) as in Cardot.
@@ -320,7 +361,16 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6),
             (the value of d and alpha are always constrained to be in (0,1))
             and opt_method is a string controlling which solver to use from scipy.optimize.minimize
             criteria is either 'GCV' for the Generalized Cross Validation criteria,
-            or 'CV' to use leave-one-out (LOO) Cross Valiation
+            or 'CV' to use leave-one-out (LOO) Cross Validation
+
+            log_change_of_variables determines whether the optimizer uses a log change-of-variables.
+                If set to None, then it automatically determines whether to do the change-of-variables
+                based on whether lambda_bounds[1]/lambda_bounds[0] >= 1e3
+            
+            penalize_constant (default: True) determines whether I is the identity matrix,
+                or if penalize_constant=False, then it is the identity matrix except the top left entry
+                is zero (so that if the top entry of beta represents the constant term, 
+                then the constant term isn't penalized)
 
     Output: beta_optimal, gcv, lambda_optimal, d_optimal, alpha_optimal
         where gcv is the generalized cross validation score (or LOO CV)
@@ -333,6 +383,8 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6),
     beta_OLS = jnp.asarray(sla.lstsq(X,y)[0])
     Rj = jnp.asarray(R)
     I  = jnp.eye(p)
+    if not penalize_constant:
+        I[0,0] = 0.
     P_OLS = jnp.asarray(sla.lstsq(X,np.eye(n))[0])
     if log_change_of_variables is None:
         if lambda_bounds[1]/lambda_bounds[0] >= 1e3:
@@ -394,4 +446,4 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6),
                      X.T@y + d_opt*(Q@np.linalg.lstsq(X,y,rcond=None)[0]),
                      assume_a = 'pos')
 
-    return beta, gcv_fliu, lam_opt, d_opt, alpha_opt
+    return beta, gcv_fliu, ParamOutput(lam=lam_opt, d=d_opt, alpha=alpha_opt)
