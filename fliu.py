@@ -347,7 +347,7 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
 # =========================
 # FUNCTIONAL LIU
 # =========================
-def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), 
+def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), d_bounds = (0,1), 
                    opt_method = 'SLSQP', criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Functional Liu estimator: combination of Cardot's generalized ridge with Liu's biased estimator
         $(XX^T + Q)^{-1}(X^T y + d lambda Q beta_{OLS})$
@@ -432,7 +432,7 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6),
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
         res = opt.minimize(crit, np.array([log(1.0),0.5,0.5]), jac=grad,
-                          bounds=[lambda_bounds,(0,1),(0,1)], method=opt_method)
+                          bounds=[lambda_bounds,d_bounds,(0,1)], method=opt_method)
 
         lam_opt, d_opt, alpha_opt = res.x
         lam_opt = exp(lam_opt)
