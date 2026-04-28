@@ -62,6 +62,7 @@ def ols(X,y, criteria = 'GCV'):
 # RIDGE
 # =========================
 def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+          gridsize=5,
           criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Classic ridge regression: $beta = (XX^T + lambda I)^{-1} X^T y$ 
     Input: X, y, [lam_opt]
@@ -137,7 +138,19 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
         # We look for the optimal vector
         grad      = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+        # Coarse search for a good starting place
+        if gridsize > 1:
+            crit = jax.jit(crit)
+            best_crit = np.inf
+            lambda0 = None
+            for lam in np.linspace(*lambda_bounds,gridsize):
+                crit_value = crit([lam])
+                if crit_value < best_crit:
+                    best_crit = crit_value
+                    lambda0 = lam
+        else:
+            lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+        
         results   = opt.minimize(crit, np.array([lambda0]), jac=grad,
                           bounds=[lambda_bounds], method=opt_method)
         lam_opt   = exp(results.x[0])
@@ -156,7 +169,7 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
 # CLASSICAL LIU
 # =========================
 def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), 
-                  opt_method = 'SLSQP', d_bounds = (0,1), 
+                  opt_method = 'SLSQP', d_bounds = (0,1), gridsize=5, 
                   criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Standard liu: $beta = (XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
     Input: X, y, [params_optimal]
@@ -234,9 +247,23 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6),
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
-        d0 = (d_bounds[0]+d_bounds[1])/2 # midpoint
-        res = opt.minimize(crit, np.array([lambda0,d0]), jac=grad,
+        # First, do a coarse grid search
+        if gridsize > 1:
+            crit = jax.jit(crit)
+            best_crit = np.inf
+            best_param = (0,0)
+            for lam in np.linspace(*lambda_bounds,gridsize):
+                for d in np.linspace(*d_bounds,gridsize):
+                    params = (lam, d)
+                    crit_value = crit(params)
+                    if crit_value < best_crit:
+                        best_crit = crit_value
+                        best_param = params
+        else:
+            lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+            d0 = (d_bounds[0]+d_bounds[1])/2 # midpoint
+            best_param = np.array([lambda0,d0])
+        res = opt.minimize(crit, best_param, jac=grad,
                           bounds=[lambda_bounds,d_bounds], method=opt_method)
 
         lam_opt, d_opt = res.x
@@ -260,8 +287,9 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6),
 # =========================
 # GENERALIZED RIDGE ESTIMATOR
 # =========================
-def generalized_ridge(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
-           criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
+def generalized_ridge(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), 
+                      opt_method = 'SLSQP', gridsize=5,
+                    criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ generalized ridge regression estimator
         $beta = (XX^T + Q)^{-1} X^T y$
         where Q = lambda(alpha I + (1-alpha) R)
@@ -342,8 +370,23 @@ def generalized_ridge(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), 
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
+        if gridsize > 1:
+            crit = jax.jit(crit)
+            best_crit = np.inf
+            best_param = (0,0)
+            for lam in np.linspace(*lambda_bounds,gridsize):
+                for alpha in np.linspace(0,1,gridsize):
+                    params = (lam, alpha)
+                    crit_value = crit(params)
+                    if crit_value < best_crit:
+                        best_crit = crit_value
+                        best_param = params
+        else:
+            lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+            best_param = np.array([lambda0,0.5])
+        
         lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
-        res = opt.minimize(crit, np.array([lambda0,0.5]), jac=grad,
+        res = opt.minimize(crit, best_param, jac=grad,
                           bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, alpha_opt = res.x
