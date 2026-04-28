@@ -6,11 +6,13 @@ jax.config.update("jax_enable_x64", True)
 from   jax import numpy as jnp
 import jax.scipy.linalg as jsla
 from typing import NamedTuple
+from scipy.optimize import OptimizeResult
 
 class ParamOutput(NamedTuple):
     lam: float = np.nan
     alpha: float = np.nan
     d: float = np.nan
+    opt_result: OptimizeResult = None
 
 # =========================
 # SECOND DIFFERENCE PENALTY
@@ -135,21 +137,26 @@ def ridge(X, y, lam_opt = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP'
         # We look for the optimal vector
         grad      = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        results   = opt.minimize(crit, log(np.array([1.0])), jac=grad,
+        lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+        results   = opt.minimize(crit, np.array([lambda0]), jac=grad,
                           bounds=[lambda_bounds], method=opt_method)
         lam_opt   = exp(results.x[0])
         beta      = sla.solve(X.T@X + lam_opt*np.eye(p), X.T@y,assume_a='pos')
         gcv_ridge = results.fun # already computed
     else:
+        if isinstance(lam_opt, ParamOutput):
+            lam_opt = lam_opt[0]
         beta = sla.solve(X.T@X + lam_opt*np.eye(p), X.T@y,assume_a='pos')
         gcv_ridge = crit(lam_opt)
-    return beta, gcv_ridge, ParamOutput(lam=lam_opt)
+        results = None
+    return beta, gcv_ridge, ParamOutput(lam=lam_opt, opt_result = results)
 
 
 # =========================
 # CLASSICAL LIU
 # =========================
-def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), 
+                  opt_method = 'SLSQP', d_bounds = (0,1), 
                   criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
     """ Standard liu: $beta = (XX^T + lambda I)^{-1}(X^T y + d lambda beta_{OLS})$
     Input: X, y, [params_optimal]
@@ -227,28 +234,35 @@ def classical_liu(X, y, params_optimal = None, lambda_bounds = (1e-6,1e6), opt_m
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        res = opt.minimize(crit, np.array([log(1.0),0.5]), jac=grad,
-                          bounds=[lambda_bounds,(0,1)], method=opt_method)
+        lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+        d0 = (d_bounds[0]+d_bounds[1])/2 # midpoint
+        res = opt.minimize(crit, np.array([lambda0,d0]), jac=grad,
+                          bounds=[lambda_bounds,d_bounds], method=opt_method)
 
         lam_opt, d_opt = res.x
         lam_opt = exp(lam_opt)
         gcv_liu = res.fun
     else:
-        lam_opt, d_opt = params_optimal
+        if isinstance(params_optimal, ParamOutput):
+            lam_opt = params_optimal.lam
+            d_opt   = params_optimal.d
+        else:
+            lam_opt, d_opt = params_optimal
         gcv_liu = crit(params_optimal)
+        res = None
 
     beta = sla.solve(X.T@X + lam_opt*np.eye(p),
                      X.T@y + d_opt*lam_opt*np.array(beta_OLS),
                      assume_a = 'pos')
 
-    return beta, gcv_liu, ParamOutput(lam=lam_opt, d=d_opt)
+    return beta, gcv_liu, ParamOutput(lam=lam_opt, d=d_opt, opt_result = res)
 
 # =========================
-# CARDOT'S ESTIMATOR
+# GENERALIZED RIDGE ESTIMATOR
 # =========================
-def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
+def generalized_ridge(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method = 'SLSQP', 
            criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
-    """ Cardot's generalized ridge regression estimator
+    """ generalized ridge regression estimator
         $beta = (XX^T + Q)^{-1} X^T y$
         where Q = lambda(alpha I + (1-alpha) R)
     Input: X, y, R, [params_optimal]
@@ -328,28 +342,34 @@ def cardot(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), opt_method 
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        res = opt.minimize(crit, np.array([log(1.0),0.5]), jac=grad,
+        lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+        res = opt.minimize(crit, np.array([lambda0,0.5]), jac=grad,
                           bounds=[lambda_bounds,(0,1)], method=opt_method)
 
         lam_opt, alpha_opt = res.x
         lam_opt = exp(lam_opt)
         gcv_cardot = res.fun
     else:
-        lam_opt, alpha_opt = params_optimal
+        if isinstance(params_optimal, ParamOutput):
+            lam_opt, alpha_opt = params_optimal[:2]
+        else:
+            lam_opt, alpha_opt = params_optimal
         gcv_cardot = crit(params_optimal)
+        res = None
 
     Q = lam_opt*(alpha_opt*np.eye(p) + (1-alpha_opt)*R)
     beta = sla.solve(X.T@X + Q, X.T@y, assume_a = 'pos')
 
-    return beta, gcv_cardot, ParamOutput(lam=lam_opt, alpha=alpha_opt)
+    return beta, gcv_cardot, ParamOutput(lam=lam_opt, alpha=alpha_opt, opt_result = res)
 
 
 # =========================
 # FUNCTIONAL LIU
 # =========================
 def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), d_bounds = (0,1), 
-                   opt_method = 'SLSQP', criteria = 'GCV', log_change_of_variables=None, penalize_constant=True):
-    """ Functional Liu estimator: combination of Cardot's generalized ridge with Liu's biased estimator
+                   opt_method = 'SLSQP', criteria = 'GCV', gridsize = 5, 
+                   log_change_of_variables=None, penalize_constant=True):
+    """ Functional Liu estimator: combination of generalized ridge with Liu's biased estimator
         $(XX^T + Q)^{-1}(X^T y + d lambda Q beta_{OLS})$
         where Q = lambda(alpha I + (1-alpha) R) as in Cardot.
     Input: X, y, R, [params_optimal]
@@ -431,19 +451,42 @@ def functional_liu(X, y, R, params_optimal=None, lambda_bounds = (1e-6,1e6), d_b
     if params_optimal is None:
         grad = jax.jit( jax.grad(crit) )
         lambda_bounds = tuple(log(jnp.array(lambda_bounds)))
-        res = opt.minimize(crit, np.array([log(1.0),0.5,0.5]), jac=grad,
+        # First, do a coarse grid search
+        if gridsize > 1:
+            crit = jax.jit(crit)
+            best_crit = np.inf
+            best_param = (0,0,0)
+            for lam in np.linspace(*lambda_bounds,gridsize):
+                for d in np.linspace(*d_bounds,gridsize):
+                    for alpha in np.linspace(0,1,gridsize):
+                        params = (lam, d, alpha)
+                        crit_value = crit(params)
+                        if crit_value < best_crit:
+                            best_crit = crit_value
+                            best_param = params
+        else:
+            lambda0 = (lambda_bounds[0] + lambda_bounds[1])/2 # midpoint
+            d0 = (d_bounds[0]+d_bounds[1])/2 # midpoint
+            best_param = np.array([lambda0,d0,0.5])
+
+        res = opt.minimize(crit, best_param, jac=grad,
                           bounds=[lambda_bounds,d_bounds,(0,1)], method=opt_method)
 
         lam_opt, d_opt, alpha_opt = res.x
         lam_opt = exp(lam_opt)
         gcv_fliu = res.fun
     else:
-        lam_opt, d_opt, alpha_opt = params_optimal
+        if isinstance(params_optimal, ParamOutput):
+            lam_opt, alpha_opt, d_opt = params_optimal[:3]
+        else:
+            lam_opt, d_opt, alpha_opt = params_optimal
         gcv_fliu = crit(params_optimal)
+        res = None
 
     Q = lam_opt*(alpha_opt*np.eye(p) + (1-alpha_opt)*R)
     beta = sla.solve(X.T@X + Q,
                      X.T@y + d_opt*(Q@np.linalg.lstsq(X,y,rcond=None)[0]),
                      assume_a = 'pos')
 
-    return beta, gcv_fliu, ParamOutput(lam=lam_opt, d=d_opt, alpha=alpha_opt)
+    return beta, gcv_fliu, ParamOutput(lam=lam_opt, d=d_opt, 
+                                       alpha=alpha_opt, opt_result = res)
